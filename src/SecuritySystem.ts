@@ -1,4 +1,3 @@
-import * as superagent from 'superagent';
 import * as Utilities from "./utility";
 import { Vendor } from "./definitions";
 
