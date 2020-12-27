@@ -1,5 +1,7 @@
 import * as Utilities from "./utility";
 import { Vendor } from "./definitions";
+import { SecuritySystemCommand } from "./definitions";
+import { Area } from "./definitions";
 
 export class SecuritySystem {
   protected username: string;
@@ -15,7 +17,7 @@ export class SecuritySystem {
   protected _isInstaller: Boolean = false;
 
   protected lastUpdate: Date = new Date();
-  protected areas = [];
+  protected areas: Area[];
   protected zones = [];
   protected __extra_area_status = [];
   protected _zsequence = [];
@@ -34,6 +36,10 @@ export class SecuritySystem {
     if(typeof pin!='undefined' && pin)
       this.passcode = pin;
     else throw new Error("Did not specify a user PIN");
+
+    this.areas = [{
+      name: "Melissia", bank: 0, sequence: 0, bank_state: [0]
+    }];
   }
 
   async login() {
@@ -90,4 +96,36 @@ export class SecuritySystem {
       console.log('Logged out successfully');
     } catch (error) { console.error(error); return (false); }
   }
+
+  async sendCommand(areas: number[] | number, command: SecuritySystemCommand = SecuritySystemCommand.AREA_DISARM) {
+    try {
+      if (this.sessionID === "" && !(this.login())) return (false);
+      if (!(command in SecuritySystemCommand)) throw new Error('Invalid alarm state ' + command);
+
+      let actionableAreas: number[] = [];
+      let actualAreas: number[] = [];
+      for (let i of this.areas) actualAreas.push(i.bank+1);
+
+      if (typeof(areas) == 'number') actionableAreas.push(areas);
+      else if (Array.isArray(areas) && areas.length > 0) actionableAreas = areas;
+      else actionableAreas = actualAreas;
+
+      for (let i of actionableAreas) {
+        if (!actualAreas.includes(i)) throw new Error('Specified area ' + i + ' not found');
+        else {
+          type payloadType = {[key: string]: string};
+          let payload: payloadType = {};
+          payload['sess'] = this.sessionID;
+          payload['comm'] = '80';
+          payload['data0'] = '2';
+          payload['data1'] = String(1 << (i - 1) % 8);
+          payload['data2'] = String(command);
+          await Utilities.makeRequest('http://' + this.IPAddress + '/user/keyfunction.cgi', payload);
+          console.log('Successfully sent command to area ' + i);
+        }
+      }
+      return true;
+    } catch (error) { console.error(error); return false; }
+  }
+
 }
