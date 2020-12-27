@@ -1,4 +1,5 @@
 import * as Utilities from "./utility";
+import * as superagent from 'superagent';
 import { Vendor } from "./definitions";
 import { SecuritySystemCommand } from "./definitions";
 import { Area } from "./definitions";
@@ -83,6 +84,8 @@ export class SecuritySystem {
       console.log('Session ID is ' + this.sessionID);
       console.log('Last Update at: ' + this.lastUpdate.toLocaleString());
 
+      // Start retrieving area and zone details; pass through the initial Response
+      this.retrieveAreas(response);
       return (true);
     } catch (error) { console.error(error); return (false); }
   }
@@ -91,28 +94,36 @@ export class SecuritySystem {
     try {
       if (this.sessionID === "")
         throw new Error('Not logged in');
+
+      // Logout gracefully
       await Utilities.makeRequest('http://' + this.IPAddress + '/logout.cgi')
       this.sessionID = "";
       console.log('Logged out successfully');
     } catch (error) { console.error(error); return (false); }
   }
 
-  async sendCommand(areas: number[] | number, command: SecuritySystemCommand = SecuritySystemCommand.AREA_DISARM) {
+  async sendCommand(areas: number[] | number = [],
+    command: SecuritySystemCommand = SecuritySystemCommand.AREA_CHIME_TOGGLE) {
     try {
       if (this.sessionID === "" && !(this.login())) return (false);
       if (!(command in SecuritySystemCommand)) throw new Error('Invalid alarm state ' + command);
 
+      // Load actual area banks to local table for ease of use
       let actionableAreas: number[] = [];
       let actualAreas: number[] = [];
       for (let i of this.areas) actualAreas.push(i.bank+1);
 
+      // Decipher input and prepare actionableAreas table for looping through
       if (typeof(areas) == 'number') actionableAreas.push(areas);
       else if (Array.isArray(areas) && areas.length > 0) actionableAreas = areas;
       else actionableAreas = actualAreas;
 
+      // For every area in actionableAreas:
       for (let i of actionableAreas) {
+        // Check if the actual area exists
         if (!actualAreas.includes(i)) throw new Error('Specified area ' + i + ' not found');
         else {
+          // Prepare the payload according to details
           type payloadType = {[key: string]: string};
           let payload: payloadType = {};
           payload['sess'] = this.sessionID;
@@ -120,6 +131,8 @@ export class SecuritySystem {
           payload['data0'] = '2';
           payload['data1'] = String(1 << (i - 1) % 8);
           payload['data2'] = String(command);
+
+          // Finally make the request
           await Utilities.makeRequest('http://' + this.IPAddress + '/user/keyfunction.cgi', payload);
           console.log('Successfully sent command to area ' + i);
         }
@@ -128,4 +141,52 @@ export class SecuritySystem {
     } catch (error) { console.error(error); return false; }
   }
 
+  async retrieveAreas (response: superagent.Response | undefined = undefined) {
+    // If we are passed an already loaded Response use that, otherwise reload area.htm
+    if (response == undefined) {
+      response = await Utilities.makeRequest('http://' + this.IPAddress + '/user/area.htm', {'sess': this.sessionID})
+    }
+
+    // Get area sequence
+    let regexMatch: any = response.text.match(/var\s+areaSequence\s+=\s+new\s+Array\(([\d,]+)\);/);
+    let sequence: number[] = regexMatch[1].split(',');
+
+    // Get area states
+    regexMatch = response.text.match(/var\s+areaStatus\s+=\s+new\s+Array\(([\d,]+)\);/);
+    let bank_states = regexMatch[1].split(',');
+
+    // Get area names
+    regexMatch = response.text.match(/var\s+areaNames\s+=\s+new\s+Array\((\"(.+)\")\);/);
+    let area_names: string[] = regexMatch[1].split(',');
+    area_names.forEach((item, i, arr) => { arr[i] = item.replace(/['"]+/g, ''); })
+
+    // Pad sequence table to match the length of area_names table
+    if (area_names.length - sequence.length > 0) {
+      let filler = new Array(area_names.length - sequence.length);
+      filler.fill(0);
+      sequence = sequence.concat(filler);
+    }
+
+    // Reset class areas tables...
+    this.areas.length = 0;
+
+    // ... and populate it from scratch
+    area_names.forEach((name, i) => {
+      // If the name is "!" it's an empty area; ignore it
+      if (name == "" || name == "%21") return;
+
+      // Create a new Area object and populate it with the area details, then push it
+      let newArea: Area = {
+        name: (name == "" ? 'Area ' + (i+1): name),
+        bank: i,
+        sequence: sequence[i],
+        bank_state: bank_states.slice(Math.floor((i / 8) * 17), (Math.floor((i / 8) * 17) + 17))
+      };
+      this.areas.push(newArea);
+
+      return (true);
+    });
+
+    // this.processAreas();
+  }
 }
