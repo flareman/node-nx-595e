@@ -36,62 +36,58 @@ export class SecuritySystem {
     else throw new Error("Did not specify a user PIN");
   }
 
-  login() {
+  async login() {
     try {
       // Attempting login
       let payload = ({lgname: this.username, lgpin: this.passcode});
-      Utilities.makeRequest('http://' + this.IPAddress + '/login.cgi', payload)
-      .then((response => {
-        var correctLine: string = "";
-        const loginPageLine: number = 25;
-        const sessionIDLine: number = 28;
-        const vendorDetailsLine: number = 6;
-        var data = response.text;
-        var lines1 = data.split("\n");
-        var lines2 = lines1;
-        var lines3 = lines1;
+      const response = await Utilities.makeRequest('http://' + this.IPAddress + '/login.cgi', payload)
+      var correctLine: string = "";
+      const loginPageLine: number = 25;
+      const sessionIDLine: number = 28;
+      const vendorDetailsLine: number = 6;
+      var data = response.text;
+      var lines1 = data.split("\n");
+      var lines2 = lines1;
+      var lines3 = lines1;
 
-        // Gotta check for successful login
-        correctLine = lines1[loginPageLine].trim();
-        if (correctLine.substr(25,7) === 'Sign in')
-              throw new Error('Login Unsuccessful');
+      // Gotta check for successful login
+      correctLine = lines1[loginPageLine].trim();
+      if (correctLine.substr(25,7) === 'Sign in')
+            throw new Error('Login Unsuccessful');
 
-        // Login confirmed, parsing session ID
-        correctLine = lines2[sessionIDLine].trim();
-        this.sessionID = correctLine.substr(30, 16);
+      // Login confirmed, parsing session ID
+      correctLine = lines2[sessionIDLine].trim();
+      this.sessionID = correctLine.substr(30, 16);
 
-        // Parsing panel vendor and software details
-        correctLine = lines3[vendorDetailsLine].trim();
-        let vendorDetails = correctLine.split(/[/_-]/);
-        switch (vendorDetails[2]) {
-          case "ZW": { this.vendor = Vendor.ZEROWIRE; break; }
-          case "CN": { this.vendor = Vendor.COMNAV; break; }
-          default: { throw new Error("Unrecognized vendor"); }
-        }
-        this.version = vendorDetails[3];
-        this.release = vendorDetails[4];
+      // Parsing panel vendor and software details
+      correctLine = lines3[vendorDetailsLine].trim();
+      let vendorDetails = correctLine.split(/[/_-]/);
+      switch (vendorDetails[2]) {
+        case "ZW": { this.vendor = Vendor.ZEROWIRE; break; }
+        case "CN": { this.vendor = Vendor.COMNAV; break; }
+        default: { throw new Error("Unrecognized vendor"); }
+      }
+      this.version = vendorDetails[3];
+      this.release = vendorDetails[4];
 
-        this.lastUpdate = new Date();
+      this.lastUpdate = new Date();
 
-        console.log('Connected successfully to panel at IP address ' + this.IPAddress);
-        console.log('Detected ' + this.vendor + ' NX-595E, Web Interface v' + this.version + '-' + this.release);
-        console.log('Session ID is ' + this.sessionID);
-        console.log('Last Update at: ' + this.lastUpdate.toLocaleString());
+      console.log('Connected successfully to panel at IP address ' + this.IPAddress);
+      console.log('Detected ' + this.vendor + ' NX-595E, Web Interface v' + this.version + '-' + this.release);
+      console.log('Session ID is ' + this.sessionID);
+      console.log('Last Update at: ' + this.lastUpdate.toLocaleString());
 
-        return (true);
-      }), reason => { throw new Error('Could not login: ' + reason)});
+      return (true);
     } catch (error) { console.error(error); return (false); }
   }
 
-  logout() {
+  async logout() {
     try {
       if (this.sessionID === "")
         throw new Error('Not logged in');
-      Utilities.makeRequest('http://' + this.IPAddress + '/logout.cgi')
-      .then((()=> {
-        this.sessionID = "";
-        console.log('Logged out successfully');
-      }), reason => { throw new Error('Could not logout: ' + reason)});
+      await Utilities.makeRequest('http://' + this.IPAddress + '/logout.cgi')
+      this.sessionID = "";
+      console.log('Logged out successfully');
     } catch (error) { console.error(error); return (false); }
   }
 }
