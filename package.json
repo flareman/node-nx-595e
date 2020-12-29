@@ -14,6 +14,7 @@
   "dependencies": {
     "@types/superagent": "^4.1.10",
     "fast-xml-parser": "^3.17.5",
+    "nconf": "^0.11.0",
     "superagent": "^6.1.0"
   },
   "devDependencies": {

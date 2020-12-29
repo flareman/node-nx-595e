@@ -1,8 +1,10 @@
 import * as Utilities from "./utility";
 import * as superagent from 'superagent';
 import { Vendor } from "./definitions";
-import { SecuritySystemCommand } from "./definitions";
 import { Area } from "./definitions";
+import { AreaBank } from "./definitions";
+import { AreaState } from "./definitions";
+import { SecuritySystemCommand } from "./definitions";
 
 export class SecuritySystem {
   protected username: string;
@@ -18,9 +20,9 @@ export class SecuritySystem {
   protected _isInstaller: Boolean = false;
 
   protected lastUpdate: Date = new Date();
-  protected areas: Area[];
+  protected areas: Area[] = [];
   protected zones = [];
-  protected __extra_area_status = [];
+  protected __extra_area_status: string[] = [];
   protected _zsequence = [];
   protected _zbank = [];
   protected _zvbank = [];
@@ -37,10 +39,6 @@ export class SecuritySystem {
     if(typeof pin!='undefined' && pin)
       this.passcode = pin;
     else throw new Error("Did not specify a user PIN");
-
-    this.areas = [{
-      name: "Melissia", bank: 0, sequence: 0, bank_state: [0]
-    }];
   }
 
   async login() {
@@ -177,16 +175,107 @@ export class SecuritySystem {
 
       // Create a new Area object and populate it with the area details, then push it
       let newArea: Area = {
-        name: (name == "" ? 'Area ' + (i+1): name),
         bank: i,
+        name: (name == "" ? 'Area ' + (i+1): name),
+        priority: 6,
         sequence: sequence[i],
-        bank_state: bank_states.slice(Math.floor((i / 8) * 17), (Math.floor((i / 8) * 17) + 17))
+        bank_state: bank_states.slice(Math.floor((i / 8) * 17), (Math.floor((i / 8) * 17) + 17)),
+        status: "",
+        states: {}
       };
+
       this.areas.push(newArea);
 
+      console.log('Successfully retrieved ' + this.areas.length + ' areas from the system');
       return (true);
     });
 
-    // this.processAreas();
+    this.processAreas();
+  }
+
+  private processAreas() {
+    // Loop through detected areas
+    this.areas.forEach(area => {
+      // Define mask for said area
+      let mask = (1 << (area.bank % 8));
+
+      // Create virtual states table for ease and readability
+      let vbank: number[] = [];
+      area.bank_state.forEach(state => {
+        vbank.push(state & mask);
+      });
+
+      // (Partially) Armed state, exit mode and chime setting booleans
+      let st_partial = Boolean(vbank[AreaBank.PARTIAL]);
+      let st_armed = Boolean(vbank[AreaBank.ARMED]);
+      let st_exit1 = Boolean(vbank[AreaBank.EXIT_MODE01]);
+      let st_exit2 = Boolean(vbank[AreaBank.EXIT_MODE02]);
+      let st_chime = Boolean(vbank[AreaBank.CHIME]);
+
+      // Priority starts from 6, which is the lowest; can go up to 1
+      let priority = 6;
+
+      let status: string = "";
+
+      // Start with index -1
+      let index = -1;
+
+      while (status == "") {
+        // Increment the index by 1
+        index++;
+        if (index >= AreaState.Priority.length) {
+
+          // If there are extra area status messages set go into this
+          if (this.__extra_area_status.length > 0) {
+            status = this.__extra_area_status[index - AreaState.Priority.length];
+
+            // Convert 'No System Faults' to 'Not Ready'
+            if (status == "No System Faults") status = AreaState.Status[AreaState.State.NOT_READY_FORCEABLE];
+            else status = AreaState.Status[AreaState.State.READY];
+          }
+          continue;
+        }
+
+        // Get virtual index based on priority
+        let v_index = AreaState.Priority[index];
+
+        if (vbank[v_index]) {
+          if (!(st_armed || st_partial) || AreaState.Status[v_index] !== AreaState.Status[AreaState.State.READY]) {
+            status = AreaState.Status[v_index];
+          }
+
+          if (AreaState.Status[v_index] !== AreaState.Status[AreaState.State.DELAY_EXIT_1]) {
+            // Bump to DELAY_EXIT_2, as it will eventually max out the while loop and move past that
+            index++;
+          }
+        } else if (AreaState.Status[v_index] == AreaState.Status[AreaState.State.READY] && !(st_armed || st_partial)) {
+          status = AreaState.Status[AreaState.State.NOT_READY];
+        }
+
+        if (vbank[AreaBank.UNKWN_03] || vbank[AreaBank.UNKWN_04] || vbank[AreaBank.UNKWN_05] || vbank[AreaBank.UNKWN_06]) {
+          priority = 1;
+        } else if (vbank[AreaBank.UNKWN_11] || vbank[AreaBank.UNKWN_12] || vbank[AreaBank.UNKWN_13] || vbank[AreaBank.UNKWN_14] || this.__extra_area_status.length > 0) {
+          priority = 2;
+        } else if (vbank[AreaBank.UNKWN_10] || st_partial) {
+          priority = 3;
+        } else if (st_armed) {
+          priority = 4;
+        } else if (vbank[AreaBank.UNKWN_02]) {
+          priority = 5;
+        }
+
+        area.priority = priority;
+        area.status = status;
+        area.states = {
+          'armed': st_armed,
+          'partial': st_partial,
+          'chime': st_chime,
+          'exit1': st_exit1,
+          'exit2': st_exit2
+        };
+      }
+    });
+    console.log('Successfully processed ' + this.areas.length + ' areas.')
+    return (true);
   }
 }
