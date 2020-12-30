@@ -2,8 +2,10 @@ import * as Utilities from "./utility";
 import * as superagent from 'superagent';
 import { Vendor } from "./definitions";
 import { Area } from "./definitions";
+import { Zone } from "./definitions";
 import { AreaBank } from "./definitions";
 import { AreaState } from "./definitions";
+import { ZoneState } from "./definitions";
 import { SecuritySystemCommand } from "./definitions";
 
 export class SecuritySystem {
@@ -21,11 +23,11 @@ export class SecuritySystem {
 
   protected lastUpdate: Date = new Date();
   protected areas: Area[] = [];
-  protected zones = [];
+  protected zones: Zone[] = [];
   protected __extra_area_status: string[] = [];
-  protected _zsequence = [];
-  protected _zbank = [];
-  protected _zvbank = [];
+  protected zonesSequence = [];
+  protected zonesBank: string[][] = [];
+  protected _zvbank: number[] = [];
 
   constructor(address: string, userid: string, pin: string) {
     if (Utilities.CheckIPAddress(address))
@@ -83,7 +85,8 @@ export class SecuritySystem {
       console.log('Last Update at: ' + this.lastUpdate.toLocaleString());
 
       // Start retrieving area and zone details; pass through the initial Response
-      this.retrieveAreas(response);
+      await this.retrieveAreas(response);
+      await this.retrieveZones();
       return (true);
     } catch (error) { console.error(error); return (false); }
   }
@@ -139,7 +142,11 @@ export class SecuritySystem {
     } catch (error) { console.error(error); return false; }
   }
 
-  async retrieveAreas (response: superagent.Response | undefined = undefined) {
+  private async retrieveAreas (response: superagent.Response | undefined = undefined) {
+    if (this.sessionID == "") {
+      console.log('Could not retrieve areas; not logged in');
+      return false;
+    }
     // If we are passed an already loaded Response use that, otherwise reload area.htm
     if (response == undefined) {
       response = await Utilities.makeRequest('http://' + this.IPAddress + '/user/area.htm', {'sess': this.sessionID})
@@ -185,15 +192,20 @@ export class SecuritySystem {
       };
 
       this.areas.push(newArea);
-
-      console.log('Successfully retrieved ' + this.areas.length + ' areas from the system');
-      return (true);
     });
 
+    console.log('Successfully retrieved ' + this.areas.length + ' areas from the system');
     this.processAreas();
+
+    return (true);
   }
 
   private processAreas() {
+    if (this.sessionID == "") {
+      console.log('Could not process areas; not logged in');
+      return false;
+    }
+
     // Loop through detected areas
     this.areas.forEach(area => {
       // Define mask for said area
@@ -264,6 +276,7 @@ export class SecuritySystem {
           priority = 5;
         }
 
+        // Update the area with details
         area.priority = priority;
         area.status = status;
         area.states = {
@@ -275,7 +288,125 @@ export class SecuritySystem {
         };
       }
     });
+
     console.log('Successfully processed ' + this.areas.length + ' areas.')
+    return (true);
+  }
+
+  private async retrieveZones() {
+    if (this.sessionID == "") {
+      console.log('Could not retrieve zones; not logged in');
+      return false;
+    }
+
+    // Retrieve zones.htm for parsing
+    const response = await Utilities.makeRequest('http://' + this.IPAddress + '/user/zones.htm', {'sess': this.sessionID})
+
+    // Get Zone sequences from response and store in class instance
+    let regexMatch: any = response.text.match(/var\s+zoneSequence\s+=\s+new\s+Array\(([\d,]+)\);/);
+    this.zonesSequence = regexMatch[1].split(',');
+
+    // Get Zone banks from response and store in class instance
+    this.zonesBank.length = 0;
+    regexMatch = response.text.match(/var\s+zoneStatus\s+=\s+new\s+Array\((.*)\);/);
+    regexMatch = regexMatch[1].matchAll(/(?:new\s+)?Array\((?<states>[^)]+)\)\s*(?=$|,\s*(?:new\s+)?Array\()/g);
+    for (const bank of regexMatch) {
+      this.zonesBank.push(bank[1].split(','));
+    }
+
+    // Retrieve zone names
+    regexMatch = response.text.match(/var zoneNames\s*=\s*(?:new\s+)?Array\(([^)]+)\).*/);
+    let zone_names: string[] = regexMatch[1].split(',');
+    zone_names.forEach((item, i, arr) => { arr[i] = decodeURI(item.replace(/['"]+/g, '')); })
+
+    // Firmware versions from 0.106 below don't allow for zone naming, so check for that
+    let zoneNaming: boolean = (parseFloat(this.version) > 0.106) ? true : false;
+
+    // Finally store the zones
+    // Reset class zones tables...
+    this.zones.length = 0;
+
+    // ... and populate it from scratch
+    zone_names.forEach((name, i) => {
+      // If the name is "!" it's an empty area; ignore it
+      if (name == "" || name == "%21") return;
+
+      // Create a new Zone object and populate it with the zone details, then push it
+      let newZone: Zone = {
+        bank: i,
+        name: (zoneNaming?(name == "" ? 'Sensor ' + (i+1) : name) : ""),
+        priority: 6,
+        sequence: 0,
+        bank_state: -1,
+        status: "",
+      };
+
+      this.zones.push(newZone);
+    });
+
+    console.log('Successfully retrieved ' + this.zones.length + ' sensors from the system');
+    this.processZones();
+
+    return (true);
+  }
+
+  private processZones() {
+    if (this.sessionID == "") {
+      console.log('Could not process zones; not logged in');
+      return false;
+    }
+
+    this._zvbank.length = 0;
+
+    // Loop through detected areas
+    this.zones.forEach(zone => {
+      // Set our mask and initial offset
+      let mask: number = 1 << zone.bank % 16;
+      let index: number = Math.floor(zone.bank / 16);
+
+      // Set initial priority, starting with 5, which is the lowest
+      let priority = 5;
+
+      // Create a virtual zone state table for ease of reference
+      let vbank: boolean[] = [];
+      this.zonesBank.forEach(element => {
+        let value: boolean = Boolean((~~(element[index])) & mask);
+        vbank.push(value);
+        this._zvbank[zone.bank] = value ? 1 : 0;
+      });
+
+      // Red zone status
+      if (vbank[ZoneState.State.UNKWN_05]) priority = 1;
+
+      // Blue zone status
+      if (vbank[ZoneState.State.UNKWN_01] || vbank[ZoneState.State.UNKWN_02] || vbank[ZoneState.State.UNKWN_06] || vbank[ZoneState.State.UNKWN_07]) priority = 2;
+
+      // Yellow zone status
+      if (vbank[ZoneState.State.UNKWN_03] || vbank[ZoneState.State.UNKWN_04]) priority = 3;
+
+      // Grey zone status
+      if (vbank[ZoneState.State.UNKWN_00]) priority = 4;
+
+      let bank_no: number = 0;
+      let status: string = "";
+
+      while (status == "") {
+        if (vbank[bank_no]) status = ZoneState.Status[bank_no];
+        else if (bank_no == 0) status = ZoneState.Ready;
+        bank_no++;
+      }
+
+      // Update our sequence
+      let sequence: number = zone.bank_state != this._zvbank[zone.bank] ? Utilities.nextSequence(zone.sequence) : zone.sequence;
+
+      // Update the zone with details
+      zone.priority = priority;
+      zone.status = status;
+      zone.bank_state = this._zvbank[zone.bank];
+      zone.sequence = sequence;
+    });
+
+    console.log('Successfully processed ' + this.zones.length + ' zones.')
     return (true);
   }
 }

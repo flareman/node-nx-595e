@@ -20,6 +20,15 @@ export interface Area {
   states: {};
 }
 
+export interface Zone {
+  bank: number;
+  name: string;
+  priority: number;
+  sequence: number;
+  bank_state: number;
+  status: string;
+}
+
 export enum AreaBank {
   ARMED = 0,
   PARTIAL = 1,
@@ -40,7 +49,7 @@ export enum AreaBank {
   UNKWN_16 = 16
 }
 
-enum _State  {
+enum _AreaState  {
   ARMED_AWAY = 0,
   ARMED_STAY,
   READY,
@@ -66,7 +75,7 @@ enum _State  {
 }
 
 export class AreaState {
-  static readonly State = _State;
+  static readonly State = _AreaState;
 
   static readonly Priority: number[] = [
     AreaState.State.ALARM_FIRE,
@@ -109,5 +118,46 @@ export class AreaState {
     'Not Ready',
     'Not Ready',
     'Disarm'
+  ]
+}
+
+enum _ZoneState  {
+  UNKWN_00 = 0,
+  UNKWN_01 = 1,
+  UNKWN_02 = 2,
+  UNKWN_03 = 3,
+  UNKWN_04 = 4,
+  UNKWN_05 = 5,
+  UNKWN_06 = 6,
+  UNKWN_07 = 7,
+  UNKWN_08 = 8,
+  UNKWN_09 = 9,
+  UNKWN_10 = 10,
+  UNKWN_11 = 11,
+  UNKWN_12 = 12,
+  UNKWN_13 = 13
+}
+
+export class ZoneState {
+  static readonly State = _ZoneState;
+  static NotReady = "Not Ready";
+  static Ready = "Ready";
+
+  static readonly Status: string[] = [
+    ZoneState.NotReady,
+    'Tamper',
+    'Trouble',
+    '',
+    'Inhibited',
+    'Alarm',
+    'Low Battery',
+    'Supervision Fault',
+    'Test Fail',
+    '',
+    'Entry Delay',
+    '',
+    'Test Active',
+    'Activity Fail',
+    'Antimask'
   ]
 }
