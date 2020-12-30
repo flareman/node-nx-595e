@@ -1,12 +1,15 @@
 import * as Utilities from "./utility";
 import * as superagent from 'superagent';
+import * as parser from 'fast-xml-parser';
 import { Vendor } from "./definitions";
 import { Area } from "./definitions";
 import { Zone } from "./definitions";
+import { SequenceResponse } from "./definitions";
 import { AreaBank } from "./definitions";
 import { AreaState } from "./definitions";
 import { ZoneState } from "./definitions";
 import { SecuritySystemCommand } from "./definitions";
+
 
 export class SecuritySystem {
   protected username: string;
@@ -25,8 +28,8 @@ export class SecuritySystem {
   protected areas: Area[] = [];
   protected zones: Zone[] = [];
   protected __extra_area_status: string[] = [];
-  protected zonesSequence = [];
-  protected zonesBank: string[][] = [];
+  protected zonesSequence: number[] = [];
+  protected zonesBank: number[][] = [];
   protected _zvbank: number[] = [];
 
   constructor(address: string, userid: string, pin: string) {
@@ -82,7 +85,6 @@ export class SecuritySystem {
       console.log('Connected successfully to panel at IP address ' + this.IPAddress);
       console.log('Detected ' + this.vendor + ' NX-595E, Web Interface v' + this.version + '-' + this.release);
       console.log('Session ID is ' + this.sessionID);
-      console.log('Last Update at: ' + this.lastUpdate.toLocaleString());
 
       // Start retrieving area and zone details; pass through the initial Response
       await this.retrieveAreas(response);
@@ -304,14 +306,14 @@ export class SecuritySystem {
 
     // Get Zone sequences from response and store in class instance
     let regexMatch: any = response.text.match(/var\s+zoneSequence\s+=\s+new\s+Array\(([\d,]+)\);/);
-    this.zonesSequence = regexMatch[1].split(',');
+    this.zonesSequence = regexMatch[1].split(',').filter((x: string) => x.trim().length && !isNaN(parseInt(x))).map(Number);
 
     // Get Zone banks from response and store in class instance
     this.zonesBank.length = 0;
     regexMatch = response.text.match(/var\s+zoneStatus\s+=\s+new\s+Array\((.*)\);/);
     regexMatch = regexMatch[1].matchAll(/(?:new\s+)?Array\((?<states>[^)]+)\)\s*(?=$|,\s*(?:new\s+)?Array\()/g);
     for (const bank of regexMatch) {
-      this.zonesBank.push(bank[1].split(','));
+      this.zonesBank.push(bank[1].split(',').filter((x: string) => x.trim().length && !isNaN(parseInt(x))).map(Number));
     }
 
     // Retrieve zone names
@@ -370,7 +372,7 @@ export class SecuritySystem {
       // Create a virtual zone state table for ease of reference
       let vbank: boolean[] = [];
       this.zonesBank.forEach(element => {
-        let value: boolean = Boolean((~~(element[index])) & mask);
+        let value: boolean = Boolean(element[index] & mask);
         vbank.push(value);
         this._zvbank[zone.bank] = value ? 1 : 0;
       });
@@ -408,5 +410,151 @@ export class SecuritySystem {
 
     console.log('Successfully processed ' + this.zones.length + ' zones.')
     return (true);
+  }
+
+  private async poll() {
+    // Requesting a sequence response is a means of polling the panel for
+    // updates; if the sequence value changes, it means something has changed
+    // The index of the area or zone that changed indicates the entry that
+    // needs updating, but it is up to the user to call the corresponding
+    // update functions to perform the actual update
+
+    if (this.sessionID == "") {
+      console.log('Could not process zones; not logged in');
+      return false;
+    }
+
+    const response = await Utilities.makeRequest('http://' + this.IPAddress + '/user/seq.xml', {'sess': this.sessionID});
+    console.log(response.text);
+    const json = parser.parse(response.text)['response'];
+    const seqResponse: SequenceResponse = {
+      areas: typeof(json['areas']) == 'number'? [json['areas']]: json['areas'].split(',').filter((x: string) => x.trim().length && !isNaN(parseInt(x))).map(Number),
+      zones: typeof(json['zones']) == 'number'? [json['zones']]: json['zones'].split(',').filter((x: string) => x.trim().length && !isNaN(parseInt(x))).map(Number)
+    };
+
+
+    let performAreaUpdate: boolean = false;
+    let performZoneUpdate: boolean = false;
+
+    let index = 0;
+
+    // Check for zone updates first
+    for (index = 0; index < seqResponse.zones.length; index++) {
+      if (seqResponse.zones[index] != this.zonesSequence[index]) {
+        console.log('Zone ' + (index + 1) + ' sequence was ' + this.zonesSequence[index] + ', has changed to ' + seqResponse.zones[index]);
+        // Updating sequence and zone details now
+        this.zonesSequence[index] = seqResponse.zones[index];
+        await this.zoneStatusUpdate(index);
+        performZoneUpdate = true;
+      }
+    }
+
+    // Now check for area update
+    for (index = 0; index < seqResponse.areas.length; index++) {
+      if (seqResponse.areas[index] != this.areas[index].sequence) {
+        console.log('Area ' + (index + 1) + ' sequence was ' + this.areas[index].sequence + ', has changed to ' + seqResponse.areas[index]);
+        // Updating sequence and zone details now
+        this.areas[index].sequence = seqResponse.areas[index];
+        await this.areaStatusUpdate(index);
+        performAreaUpdate = true;
+      }
+    }
+
+    // Trigger zone and area updates according to changes detected
+    if (performZoneUpdate) this.processZones();
+    if (performAreaUpdate) this.processAreas();
+
+    return (true);
+  }
+
+  private async zoneStatusUpdate(bank: number) {
+    if (this.sessionID == "") {
+      console.log('Could not process zones; not logged in');
+      return false;
+    }
+
+    // Fetch zone update
+    const response = await Utilities.makeRequest('http://' + this.IPAddress + '/user/zstate.xml', {'sess': this.sessionID, 'state': bank});
+    const json = parser.parse(response.text)['response'];
+    const zdat = typeof(json['zdat']) == 'number'? [json['zdat']]: json['zdat'].split(',').filter((x: string) => x.trim().length && !isNaN(parseInt(x))).map(Number);
+    const temp = this.zonesBank[bank] = zdat;
+    this.zonesBank[bank] = zdat;
+
+    console.log('Zone ' + (bank + 1) + ' update: was ' + temp + ', changing to ' + zdat);
+    return (true);
+  }
+
+  private async areaStatusUpdate(bank: number) {
+    if (this.sessionID == "") {
+      console.log('Could not process zones; not logged in');
+      return false;
+    }
+
+    // Fetch area update
+    const response = await Utilities.makeRequest('http://' + this.IPAddress + '/user/status.xml', {'sess': this.sessionID, 'arsel': bank});
+    const json = parser.parse(response.text)['response'];
+    if (json.hasOwnProperty('sysflt')) this.__extra_area_status = json['sysflt'].split('\n');
+    else this.__extra_area_status = [];
+    this.areas[bank].bank_state.length = 0;
+    for (let index: number = 0; index < 17; index++) {
+      this.areas[bank].bank_state.push(json["stat"+index]);
+    }
+
+    console.log('Area ' + (bank + 1) + ' was updated');
+    return (true);
+  }
+
+  monitor() {
+    // This function is essentially an endless loop, monitoring the system
+    // until the user terminates, and outputting the system details, as well
+    // as changes to status
+
+    if (this.sessionID == "") {
+      console.log('Could not process zones; not logged in');
+      return false;
+    }
+
+    let areaDelta: number[] = new Array(this.areas.length);
+    let zoneDelta: number[] = new Array(this.zones.length);
+    areaDelta.fill(-1);
+    zoneDelta.fill(-1);
+    let nameBuffer: string = "";
+    let sequenceBuffer: string = "";
+    let currentTimestampString: string = new Date().toLocaleString();
+    let abort: boolean = false;
+    let delim: boolean = false;
+
+    console.log('Starting monitor mode');
+
+    const loop = async ()=>{
+      await this.poll();
+      delim = false;
+      this.zones.forEach(zone => {
+        if (zoneDelta[zone.bank] != zone.sequence) {
+          sequenceBuffer = ("0000" + zone.sequence).slice(-3);
+          nameBuffer = (zone.name + new Array(24).join(' ')).slice(0, 24);
+          console.log(`${currentTimestampString} [${sequenceBuffer}] ${nameBuffer}: ${zone.status}`);
+          zoneDelta[zone.bank] = zone.sequence;
+          delim = true;
+        }
+      });
+      this.areas.forEach(area => {
+        if (areaDelta[area.bank] != area.sequence) {
+          sequenceBuffer = ("0000" + area.sequence).slice(-3);
+          nameBuffer = (area.name + new Array(24).join(' ')).slice(0, 24);
+          console.log(`${currentTimestampString} [${sequenceBuffer}] ${nameBuffer}: ${area.status}`);
+          areaDelta[area.bank] = area.sequence;
+          delim = true;
+        }
+      });
+      if (delim) console.log('---');
+      setTimeout(()=> { loop(); }, 500);
+    };
+
+    loop();
+
+    while (!abort) {
+      if (false) abort = true;
+    }
   }
 }

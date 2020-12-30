@@ -1,4 +1,3 @@
-import * as parser from 'fast-xml-parser';
 import * as superagent from 'superagent';
 
 export function CheckIPAddress(ipaddress: string) {
@@ -6,8 +5,6 @@ export function CheckIPAddress(ipaddress: string) {
     return (true);
   else return (false);
 }
-
-export function parseXML(str: String) { return parser.convertToJson(str); }
 
 export async function makeRequest(address: string, payload = {}) {
   return await superagent.post(address).type('form').send(payload);

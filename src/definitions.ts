@@ -29,6 +29,11 @@ export interface Zone {
   status: string;
 }
 
+export interface SequenceResponse {
+  areas: number[];
+  zones: number[];
+}
+
 export enum AreaBank {
   ARMED = 0,
   PARTIAL = 1,
