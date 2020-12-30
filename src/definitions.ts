@@ -25,7 +25,7 @@ export interface Zone {
   name: string;
   priority: number;
   sequence: number;
-  bank_state: number;
+  bank_state: number[];
   status: string;
 }
 

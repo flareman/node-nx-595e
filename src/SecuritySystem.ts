@@ -30,7 +30,7 @@ export class SecuritySystem {
   protected __extra_area_status: string[] = [];
   protected zonesSequence: number[] = [];
   protected zonesBank: number[][] = [];
-  protected _zvbank: number[] = [];
+  protected _zvbank: number[][] = [];
 
   constructor(address: string, userid: string, pin: string) {
     if (Utilities.CheckIPAddress(address))
@@ -291,7 +291,7 @@ export class SecuritySystem {
       }
     });
 
-    console.log('Successfully processed ' + this.areas.length + ' areas.')
+    // console.log('Successfully processed ' + this.areas.length + ' areas.')
     return (true);
   }
 
@@ -339,7 +339,7 @@ export class SecuritySystem {
         name: (zoneNaming?(name == "" ? 'Sensor ' + (i+1) : name) : ""),
         priority: 6,
         sequence: 0,
-        bank_state: -1,
+        bank_state: [],
         status: "",
       };
 
@@ -371,10 +371,11 @@ export class SecuritySystem {
 
       // Create a virtual zone state table for ease of reference
       let vbank: boolean[] = [];
+      this._zvbank.push([]);
       this.zonesBank.forEach(element => {
         let value: boolean = Boolean(element[index] & mask);
         vbank.push(value);
-        this._zvbank[zone.bank] = value ? 1 : 0;
+        this._zvbank[zone.bank].push(value ? 1 : 0);
       });
 
       // Red zone status
@@ -399,7 +400,7 @@ export class SecuritySystem {
       }
 
       // Update our sequence
-      let sequence: number = zone.bank_state != this._zvbank[zone.bank] ? Utilities.nextSequence(zone.sequence) : zone.sequence;
+      let sequence: number = zone.bank_state.join() !== this._zvbank[zone.bank].join() ? Utilities.nextSequence(zone.sequence) : zone.sequence;
 
       // Update the zone with details
       zone.priority = priority;
@@ -408,7 +409,7 @@ export class SecuritySystem {
       zone.sequence = sequence;
     });
 
-    console.log('Successfully processed ' + this.zones.length + ' zones.')
+    // console.log('Successfully processed ' + this.zones.length + ' zones.')
     return (true);
   }
 
@@ -425,13 +426,11 @@ export class SecuritySystem {
     }
 
     const response = await Utilities.makeRequest('http://' + this.IPAddress + '/user/seq.xml', {'sess': this.sessionID});
-    console.log(response.text);
     const json = parser.parse(response.text)['response'];
     const seqResponse: SequenceResponse = {
       areas: typeof(json['areas']) == 'number'? [json['areas']]: json['areas'].split(',').filter((x: string) => x.trim().length && !isNaN(parseInt(x))).map(Number),
       zones: typeof(json['zones']) == 'number'? [json['zones']]: json['zones'].split(',').filter((x: string) => x.trim().length && !isNaN(parseInt(x))).map(Number)
     };
-
 
     let performAreaUpdate: boolean = false;
     let performZoneUpdate: boolean = false;
@@ -441,7 +440,7 @@ export class SecuritySystem {
     // Check for zone updates first
     for (index = 0; index < seqResponse.zones.length; index++) {
       if (seqResponse.zones[index] != this.zonesSequence[index]) {
-        console.log('Zone ' + (index + 1) + ' sequence was ' + this.zonesSequence[index] + ', has changed to ' + seqResponse.zones[index]);
+        // console.log('Zone ' + (index + 1) + ' sequence was ' + this.zonesSequence[index] + ', has changed to ' + seqResponse.zones[index]);
         // Updating sequence and zone details now
         this.zonesSequence[index] = seqResponse.zones[index];
         await this.zoneStatusUpdate(index);
@@ -452,7 +451,7 @@ export class SecuritySystem {
     // Now check for area update
     for (index = 0; index < seqResponse.areas.length; index++) {
       if (seqResponse.areas[index] != this.areas[index].sequence) {
-        console.log('Area ' + (index + 1) + ' sequence was ' + this.areas[index].sequence + ', has changed to ' + seqResponse.areas[index]);
+        // console.log('Area ' + (index + 1) + ' sequence was ' + this.areas[index].sequence + ', has changed to ' + seqResponse.areas[index]);
         // Updating sequence and zone details now
         this.areas[index].sequence = seqResponse.areas[index];
         await this.areaStatusUpdate(index);
@@ -480,7 +479,7 @@ export class SecuritySystem {
     const temp = this.zonesBank[bank] = zdat;
     this.zonesBank[bank] = zdat;
 
-    console.log('Zone ' + (bank + 1) + ' update: was ' + temp + ', changing to ' + zdat);
+    // console.log('Zone ' + (bank + 1) + ' update: was ' + temp + ', changing to ' + zdat);
     return (true);
   }
 
@@ -521,14 +520,15 @@ export class SecuritySystem {
     let nameBuffer: string = "";
     let sequenceBuffer: string = "";
     let currentTimestampString: string = new Date().toLocaleString();
-    let abort: boolean = false;
     let delim: boolean = false;
 
     console.log('Starting monitor mode');
+    console.log('=====================');
 
-    const loop = async ()=>{
+    const pollTimer = setInterval(async () => {
       await this.poll();
       delim = false;
+
       this.zones.forEach(zone => {
         if (zoneDelta[zone.bank] != zone.sequence) {
           sequenceBuffer = ("0000" + zone.sequence).slice(-3);
@@ -538,6 +538,7 @@ export class SecuritySystem {
           delim = true;
         }
       });
+
       this.areas.forEach(area => {
         if (areaDelta[area.bank] != area.sequence) {
           sequenceBuffer = ("0000" + area.sequence).slice(-3);
@@ -547,14 +548,10 @@ export class SecuritySystem {
           delim = true;
         }
       });
+
       if (delim) console.log('---');
-      setTimeout(()=> { loop(); }, 500);
-    };
+    }, 500);
 
-    loop();
-
-    while (!abort) {
-      if (false) abort = true;
-    }
+    return (true);
   }
 }
