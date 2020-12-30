@@ -50,7 +50,7 @@ export class SecuritySystem {
     try {
       // Attempting login
       let payload = ({lgname: this.username, lgpin: this.passcode});
-      const response = await Utilities.makeRequest('http://' + this.IPAddress + '/login.cgi', payload)
+      const response = await this.makeRequest('http://' + this.IPAddress + '/login.cgi', payload, false);
       var correctLine: string = "";
       const loginPageLine: number = 25;
       const sessionIDLine: number = 28;
@@ -99,7 +99,7 @@ export class SecuritySystem {
         throw new Error('Not logged in');
 
       // Logout gracefully
-      await Utilities.makeRequest('http://' + this.IPAddress + '/logout.cgi')
+      await this.makeRequest('http://' + this.IPAddress + '/logout.cgi', true, true);
       this.sessionID = "";
       console.log('Logged out successfully');
     } catch (error) { console.error(error); return (false); }
@@ -135,7 +135,7 @@ export class SecuritySystem {
           payload['data2'] = String(command);
 
           // Finally make the request
-          await Utilities.makeRequest('http://' + this.IPAddress + '/user/keyfunction.cgi', payload);
+          await this.makeRequest('http://' + this.IPAddress + '/user/keyfunction.cgi', payload);
           console.log('Successfully sent command to area ' + i);
         }
       }
@@ -150,8 +150,10 @@ export class SecuritySystem {
     }
     // If we are passed an already loaded Response use that, otherwise reload area.htm
     if (response == undefined) {
-      response = await Utilities.makeRequest('http://' + this.IPAddress + '/user/area.htm', {'sess': this.sessionID})
+      response = await this.makeRequest('http://' + this.IPAddress + '/user/area.htm', {'sess': this.sessionID})
+      if (!response) throw new Error('Panel response returned as undefined');
     }
+
 
     // Get area sequence
     let regexMatch: any = response.text.match(/var\s+areaSequence\s+=\s+new\s+Array\(([\d,]+)\);/);
@@ -301,7 +303,7 @@ export class SecuritySystem {
     }
 
     // Retrieve zones.htm for parsing
-    const response = await Utilities.makeRequest('http://' + this.IPAddress + '/user/zones.htm', {'sess': this.sessionID})
+    const response = await this.makeRequest('http://' + this.IPAddress + '/user/zones.htm', {'sess': this.sessionID})
 
     // Get Zone sequences from response and store in class instance
     let regexMatch: any = response.text.match(/var\s+zoneSequence\s+=\s+new\s+Array\(([\d,]+)\);/);
@@ -399,7 +401,7 @@ export class SecuritySystem {
       }
 
       // Update our sequence
-      let sequence: number = zone.bank_state.join() !== this._zvbank[zone.bank].join() ? Utilities.nextSequence(zone.sequence) : zone.sequence;
+      let sequence: number = zone.bank_state.join() !== this._zvbank[zone.bank].join() ? this.nextSequence(zone.sequence) : zone.sequence;
 
       // Update the zone with details
       zone.priority = priority;
@@ -424,7 +426,7 @@ export class SecuritySystem {
       return false;
     }
 
-    const response = await Utilities.makeRequest('http://' + this.IPAddress + '/user/seq.xml', {'sess': this.sessionID});
+    const response = await this.makeRequest('http://' + this.IPAddress + '/user/seq.xml', {'sess': this.sessionID});
     const json = parser.parse(response.text)['response'];
     const seqResponse: SequenceResponse = {
       areas: typeof(json['areas']) == 'number'? [json['areas']]: json['areas'].split(',').filter((x: string) => x.trim().length && !isNaN(parseInt(x))).map(Number),
@@ -472,7 +474,7 @@ export class SecuritySystem {
     }
 
     // Fetch zone update
-    const response = await Utilities.makeRequest('http://' + this.IPAddress + '/user/zstate.xml', {'sess': this.sessionID, 'state': bank});
+    const response = await this.makeRequest('http://' + this.IPAddress + '/user/zstate.xml', {'sess': this.sessionID, 'state': bank});
     const json = parser.parse(response.text)['response'];
     const zdat = typeof(json['zdat']) == 'number'? [json['zdat']]: json['zdat'].split(',').filter((x: string) => x.trim().length && !isNaN(parseInt(x))).map(Number);
     const temp = this.zonesBank[bank] = zdat;
@@ -489,7 +491,7 @@ export class SecuritySystem {
     }
 
     // Fetch area update
-    const response = await Utilities.makeRequest('http://' + this.IPAddress + '/user/status.xml', {'sess': this.sessionID, 'arsel': bank});
+    const response = await this.makeRequest('http://' + this.IPAddress + '/user/status.xml', {'sess': this.sessionID, 'arsel': bank});
     const json = parser.parse(response.text)['response'];
     if (json.hasOwnProperty('sysflt')) this.__extra_area_status = json['sysflt'].split('\n');
     else this.__extra_area_status = [];
@@ -524,7 +526,7 @@ export class SecuritySystem {
     console.log('Starting monitor mode');
     console.log('=====================');
 
-    const pollTimer = setInterval(async () => {
+    setInterval(async () => {
       await this.poll();
       delim = false;
 
@@ -553,4 +555,30 @@ export class SecuritySystem {
 
     return (true);
   }
+
+  private nextSequence (last: number) {
+    if (last < 256)
+      return (last + 1);
+    return 1;
+  }
+
+  private async makeRequest(address: string, payload = {}, retryOnFail: boolean = true, allowRedirect:boolean = true) {
+    let response: any;
+    try {
+      response = await superagent.post(address).type('form').send(payload).redirects(allowRedirect?2:0);
+    } catch (error) {
+      if (!retryOnFail) throw(error);
+      else {
+        try {
+          await this.login();
+          try {
+            (<any>payload)['sess'] = this.sessionID;
+            response = await this.makeRequest(address, payload, false, allowRedirect);
+          } catch (error) { throw (error); }
+        } catch (error) { throw (error); }
+      }
+    }
+    return response;
+  }
+
 }

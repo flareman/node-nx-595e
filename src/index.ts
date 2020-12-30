@@ -10,8 +10,9 @@ SS.login().then(()=> {
   if (nconf.any('monitor')) SS.monitor();
   else if (nconf.any('scene')) {
     let command = SecuritySystemCLIScenes[nconf.any('scene')];
-    let area: number = -1;
+    let area: number | number[] = -1;
     if (nconf.any('area')) area = parseInt(nconf.any('area'));
+    else area = [];
     SS.sendCommand(parseInt(command), area).then(()=> {
         SS.logout();
     });
