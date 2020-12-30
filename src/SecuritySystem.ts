@@ -105,8 +105,7 @@ export class SecuritySystem {
     } catch (error) { console.error(error); return (false); }
   }
 
-  async sendCommand(areas: number[] | number = [],
-    command: SecuritySystemCommand = SecuritySystemCommand.AREA_CHIME_TOGGLE) {
+  async sendCommand(command: SecuritySystemCommand = SecuritySystemCommand.AREA_CHIME_TOGGLE, areas: number[] | number = []) {
     try {
       if (this.sessionID === "" && !(this.login())) return (false);
       if (!(command in SecuritySystemCommand)) throw new Error('Invalid alarm state ' + command);

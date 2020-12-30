@@ -3,11 +3,19 @@ export enum Vendor {
   COMNAV = "COMNAV",
   UNDEFINED = "NONE"
 }
+
 export enum SecuritySystemCommand {
   AREA_CHIME_TOGGLE = 1,
   AREA_DISARM = 16,
   AREA_AWAY = 17,
   AREA_STAY = 18
+}
+
+export enum SecuritySystemCLIScenes {
+  "chime" = SecuritySystemCommand.AREA_CHIME_TOGGLE,
+  "disarm" = SecuritySystemCommand.AREA_DISARM,
+  "away" = SecuritySystemCommand.AREA_AWAY,
+  "stay" = SecuritySystemCommand.AREA_STAY
 }
 
 export interface Area {
