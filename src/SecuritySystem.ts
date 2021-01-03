@@ -99,7 +99,7 @@ export class SecuritySystem {
         throw new Error('Not logged in');
 
       // Logout gracefully
-      await this.makeRequest('http://' + this.IPAddress + '/logout.cgi', true, true);
+      await this.makeRequest('http://' + this.IPAddress + '/logout.cgi', {}, true, true);
       this.sessionID = "";
       console.log('Logged out successfully');
     } catch (error) { console.error(error); return (false); }
@@ -526,7 +526,7 @@ export class SecuritySystem {
     console.log('Starting monitor mode');
     console.log('=====================');
 
-    setInterval(async () => {
+    const iterateLoop = async () => {
       await this.poll();
       delim = false;
 
@@ -551,7 +551,11 @@ export class SecuritySystem {
       });
 
       if (delim) console.log('---');
-    }, 500);
+
+      setTimeout(iterateLoop, 500);
+    }
+
+    setTimeout(iterateLoop, 500);
 
     return (true);
   }
@@ -562,10 +566,10 @@ export class SecuritySystem {
     return 1;
   }
 
-  private async makeRequest(address: string, payload = {}, retryOnFail: boolean = true, allowRedirect:boolean = true) {
+  private async makeRequest(address: string, payload = {}, retryOnFail: boolean = true, allowRedirect:boolean = false) {
     let response: any;
     try {
-      response = await superagent.post(address).type('form').send(payload).redirects(allowRedirect?2:0);
+      response = await superagent.post(address).type('form').send(payload).redirects(allowRedirect?1:0);
     } catch (error) {
       if (!retryOnFail) throw(error);
       else {
@@ -580,5 +584,4 @@ export class SecuritySystem {
     }
     return response;
   }
-
 }
